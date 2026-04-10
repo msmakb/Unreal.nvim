@@ -133,8 +133,14 @@ Commands.LogLevel_Verbose = kLogLevel_Verbose
 Commands.LogLevel_VeryVerbose = kLogLevel_VeryVerbose
 
 function Commands.Log(msg)
-    PrintAndLogError(msg)
+    if not msg then
+        logWithVerbosity(kLogLevel_Error, "message was nill")
+        return
+    end
+    print(msg)
+    logWithVerbosity(kLogLevel_Log, msg)
 end
+
 
 Commands.onStatusUpdate = function()
 end
@@ -173,6 +179,10 @@ function SplitString(str)
 end
 
 function Commands._CreateConfigFile(configFilePath, projectName)
+        local platformName = "Win64"
+    if Commands.IsMac() then
+        platformName = "Mac"
+    end
     local configContents = [[
 {
     "version" : "0.0.2",
@@ -185,42 +195,42 @@ function Commands._CreateConfigFile(configFilePath, projectName)
             "Configuration" : "DebugGame",
             "withEditor" : true,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         },
         {
             "TargetName" : "]] .. projectName .. [[",
             "Configuration" : "DebugGame",
             "withEditor" : false,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         },
         {
             "TargetName" : "]] .. projectName .. [[-Editor",
             "Configuration" : "Development",
             "withEditor" : true,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         },
         {
             "TargetName" : "]] .. projectName .. [[",
             "Configuration" : "Development",
             "withEditor" : false,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         },
         {
             "TargetName" : "]] .. projectName .. [[-Editor",
             "Configuration" : "Shipping",
             "withEditor" : true,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         },
         {
             "TargetName" : "]] .. projectName .. [[",
             "Configuration" : "Shipping",
             "withEditor" : false,
             "UbtExtraFlags" : "",
-            "PlatformName" : "Win64"
+            "PlatformName" : "]].. platformName ..[["
         }
     ]
 }
@@ -228,7 +238,7 @@ function Commands._CreateConfigFile(configFilePath, projectName)
     -- local file = io.open(configFilePath, "w")
     -- file:write(configContents)
     -- file:close()
-    PrintAndLogMessage("Please populate the configuration for the Unreal project, especially EnginePath, the path to the Unreal Engine")
+    Commands.Log("Please populate the configuration for the Unreal project, especially EnginePath, the path to the Unreal Engine")
     -- local buf = vim.api.nvim_create_buf(false, true)
     vim.cmd('new ' .. configFilePath)
     vim.cmd('setlocal buftype=')
@@ -244,7 +254,7 @@ function Commands._EnsureConfigFile(projectRootDir, projectName)
 
     if (not configFile) then
         Commands._CreateConfigFile(configFilePath, projectName)
-        PrintAndLogMessage("created config file")
+        Commands.Log("created config file")
         return nil
     end
 
@@ -269,12 +279,45 @@ function Commands._GetDefaultProjectNameAndDir(filepath)
     local uprojectPath, projectDir
     projectDir, uprojectPath = Commands._find_file_with_extension(filepath, "uproject")
     if not uprojectPath then
-        PrintAndLogMessage("Failed to determine project name, could not find the root of the project that contains the .uproject")
+        Commands.Log("Failed to determine project name, could not find the root of the project that contains the .uproject")
         return nil, nil
     end
     local projectName = vim.fn.fnamemodify(uprojectPath, ":t:r")
     return projectName, projectDir
 end
+function Commands.IsMac()
+    return vim.loop.os_uname().sysname == "Darwin"
+end
+
+function Commands.IsWindows()
+    return vim.loop.os_uname().sysname == "Windows_NT"
+end
+
+function Commands.GetPlatformName()
+    if Commands.IsMac() then
+        return "Mac"
+    else
+        return "Win64"
+    end
+end
+
+function Commands.GetEditorName()
+    if Commands.IsMac() then
+        return "UnrealEditor"
+    else
+        return "UnrealEditor"
+    end
+end
+
+function Commands.GetExecutableFileExtension()
+    if Commands.IsMac() then
+        return ""
+    else
+        return ".exe"
+    end
+end
+
+
 
 local CurrentCompileCommandsTargetFilePath = ""
 function CurrentGenData:GetTaskAndStatus()
@@ -284,6 +327,7 @@ function CurrentGenData:GetTaskAndStatus()
     local status = self:GetTaskStatus(self.currentTask)
     return self.currentTask.."->".. status
 end
+
 
 function CurrentGenData:GetTaskStatus(taskName)
     local status = self.tasks[taskName]
@@ -296,11 +340,11 @@ end
 
 function CurrentGenData:SetTaskStatus(taskName, newStatus)
     if (self.currentTask ~= "" and self.currentTask ~= taskName) and (self:GetTaskStatus(self.currentTask) ~= TaskState.completed) then
-        PrintAndLogMessage("Cannot start a new task. Current task still in progress " .. self.currentTask)
+        Commands.Log("Cannot start a new task. Current task still in progress " .. self.currentTask)
         PrintAndLogError("Cannot start a new task. Current task still in progress " .. self.currentTask)
         return
     end
-    PrintAndLogMessage("SetTaskStatus: " .. taskName .. "->" .. newStatus)
+    Commands.Log("SetTaskStatus: " .. taskName .. "->" .. newStatus)
     self.currentTask = taskName
     self.tasks[taskName] = newStatus
 end
@@ -321,54 +365,61 @@ local function file_exists(name)
 end
 
 function ExtractRSP(rsppath)
+    rsppath = MakeUnixPath(rsppath)
+    Commands.Log("Extracting from RSP: " .. rsppath)
+
+    if not file_exists(rsppath) then
+       Commands.Log("RSP file does not exist: " .. rsppath)
+       return nil
+    end
+
+    local lines = {}
+
+    if Commands.IsMac() then
+        for line in io.lines(rsppath) do
+            table.insert(lines, line)
+        end
+        return table.concat(lines, "\n")
+    end
+
     local extraFlags = "-std=c++20 -Wno-deprecated-enum-enum-conversion -Wno-deprecated-anon-enum-enum-conversion -ferror-limit=0 -Wno-inconsistent-missing-override"
     local extraIncludes = {
         "Engine/Source/Runtime/CoreUObject/Public/UObject/ObjectMacros.h",
         "Engine/Source/Runtime/Core/Public/Misc/EnumRange.h"
     }
+    
+    -- First line in UE response files is the source file, which we don't want here.
+    local isFirstLine = true 
 
-    rsppath = rsppath:gsub("\\\\","/")
-    PrintAndLogMessage(rsppath)
-
-    if not file_exists(rsppath) then
-       PrintAndLogMessage("rsppath doesn't exists: " .. rsppath)
-       return
-    end
-
-    local lines = {}
-    local isFirstLine = true
-    local lineNb = 0;
     for line in io.lines(rsppath) do
-        local discardLine = true
-
-        -- ignored lines
-        if line:find("^/FI") then discardLine = false end
-        if line:find("^/I") then discardLine = false end
-        if line:find("^-W") then discardLine = false end
-
-        line = line:gsub("^/FI", "-include ")
-        line = line:gsub("^(/I )(.*)", "-I \"%2\"")
-
-        if isFirstLine then
-            discardLine = false
+        if not isFirstLine then
+            -- Remove quotes surrounding the line
+            line = line:gsub('^"', ''):gsub('"$', '')
+            
+            -- Translate Windows-style flags to clang-style
+            if line:find("^/I") then
+                -- Convert /I "path" to -I"path"
+                line = line:gsub("^/I(.*)", "-I%1")
+                table.insert(lines, line)
+            elseif line:find("^/FI") then
+                -- Convert /FI "path" to -include "path"
+                line = line:gsub("^/FI(.*)", "-include%1")
+                table.insert(lines, line)
+            elseif line:find("^-W") then
+                -- Keep existing warning flags
+                table.insert(lines, line)
+            end
+            -- Other flags like /D (defines) are ignored for now, but could be added.
         end
-
-        if not discardLine then
-            lines[lineNb] = line .. "\n"
-            lineNb = lineNb + 1
-        end
-
         isFirstLine = false
     end
 
     for _, incl in ipairs(extraIncludes) do
-        lines[lineNb] ="\n" .. "-include \"" .. CurrentGenData.config.EngineDir .. "/" .. incl .. "\""
-        lineNb = lineNb + 1
+        table.insert(lines, "-include \"" .. CurrentGenData.config.EngineDir .. "/" .. incl .. "\"")
     end
-    lines[lineNb] =  "\n" .. extraFlags
-    lineNb = lineNb + 1
-    --table.insert(lines, "\n\"" .. currentFilename .. "\"")
-    return table.concat(lines)
+    table.insert(lines, extraFlags)
+    
+    return table.concat(lines, "\n")
 end
 
 function CreateCommandLine()
@@ -382,12 +433,15 @@ function EscapePath(path)
     return path
 end
 function EnsureDirPath(path)
-    PrintAndLogMessage("Ensuring path exists: "..path)
-    -- os.execute("mkdir -p " .. path)
-    local handle = io.popen("cmd.exe /c mkdir \"" .. path.. "\"")
-    handle:flush()
-    local result = handle:read("*a")
-    handle:close()
+    Commands.Log("Ensuring path exists: "..path)
+    if Commands.IsMac() then
+        os.execute("mkdir -p " .. path)
+    else
+        local handle = io.popen("cmd.exe /c mkdir \"" .. path.. "\"")
+        handle:flush()
+        local result = handle:read("*a")
+        handle:close()
+    end
 end
 
 local function IsEngineFile(path, start)
@@ -398,6 +452,9 @@ local function IsEngineFile(path, start)
 end
 
 local function IsQuickfixWin(winid)
+    if type(winid) ~= "number" or winid <= 0 then
+        return false
+    end
     if not vim.api.nvim_win_is_valid(winid) then return false end
     local bufnr = vim.api.nvim_win_get_buf(winid)
     local buftype = vim.api.nvim_buf_get_option(bufnr, 'buftype')
@@ -425,6 +482,16 @@ local function ScrollQF()
         Commands.QuickfixWinId = GetQuickfixWinId()
     end
 
+    if not IsQuickfixWin(Commands.QuickfixWinId) then
+        return
+    end
+
+    if not Commands.QuickfixWinId or not vim.api.nvim_win_is_valid(Commands.QuickfixWinId) then
+        -- No quickfix window found, so we can't scroll.
+        -- This can happen if the dispatch command hasn't opened it yet.
+        return
+    end
+
     local qf_list = vim.fn.getqflist()
     local last_line = #qf_list
     if last_line > 0 then
@@ -446,25 +513,37 @@ end
 function Stage_UbtGenCmd()
     coroutine.yield()
     Commands.BeginTask("gencmd")
-    PrintAndLogMessage("callback called!")
-    local outputJsonPath = CurrentGenData.config.EngineDir .. "/compile_commands.json"
+    Commands.Log("callback called!")
 
+    -- Determine where UBT is expected to generate the file based on the command used.
+    local ubtJsonPath
+    if CurrentGenData.WithEngine then
+        -- UnrealBuildTool -mode=GenerateClangDatabase with -engine flag places the output in the Engine directory.
+        ubtJsonPath = CurrentGenData.config.EngineDir .. "/compile_commands.json"
+    else
+        -- When run for a specific game project, it places it in the project directory.
+        ubtJsonPath = CurrentGenData.prjDir .. "/compile_commands.json"
+    end
+    
+    -- This is the final destination file that clangd will use, which is always in the project root.
+    local clangdJsonPath = CurrentGenData.prjDir .. "/compile_commands.json"
+    
     local rspdir = CurrentGenData.prjDir .. "/Intermediate/clangRsp/" .. 
-    CurrentGenData.target.PlatformName .. "/" .. 
+    Commands.GetPlatformName() .. "/" .. 
     CurrentGenData.target.Configuration .. "/"
 
     -- all these replaces are slow, could be rewritten as a parser
     EnsureDirPath(rspdir)
 
-    -- replace bad compiler
-    local file_path = outputJsonPath
+    -- The file we read from is the one generated by UBT.
+    local file_path = ubtJsonPath
 
     local old_text = "Llvm\\\\x64\\\\bin\\\\clang%-cl%.exe"
     local new_text = "Llvm/x64/bin/clang++.exe"
 
     local contentLines = {}
-    PrintAndLogMessage("processing compile_commands.json and writing response files")
-    PrintAndLogMessage(file_path)
+    Commands.Log("processing compile_commands.json and writing response files")
+    Commands.Log("Reading UBT output from: " .. file_path)
 
     local skipEngineFiles = true
     if CurrentGenData.WithEngine then
@@ -500,72 +579,66 @@ function Stage_UbtGenCmd()
             i,j = line:find("%@")
 
             if i then
-                -- The file name might have an optional \" around to shell escape the file name in the command.
-                local backslashValue = string.byte("\\", 1)
-                if string.byte(line, j+1) == backslashValue then
-                    j = j+2 -- \ and "
-                end
-
-                local _,endpos = line:find("\"", j+1)
-
-                -- same thing here
-                if string.byte(line, endpos-1) == backslashValue then
-                    endpos = endpos-1
-                end
-
-                local rsppath = line:sub(j+1, endpos-1)
-                if rsppath and file_exists(rsppath) then
-                    local newrsppath = rsppath .. ".clang.rsp"
-
-                    -- rewrite rsp contents
-                    if not shouldSkipFile then
-                        local rspfile = io.open(newrsppath, "w")
-                        local rspcontent = ExtractRSP(rsppath)
-                        rspfile:write(rspcontent)
-                        rspfile:close()
+                if Commands.IsMac() then
+                    -- On macOS, UBT already emits clang-compatible response files.
+                    -- Keep the original command line so all include paths are preserved.
+                    local normalizedLine = line
+                    while true do
+                        local replacedCount = 0
+                        normalizedLine, replacedCount = normalizedLine:gsub("%.rsp%.clang%.rsp", ".rsp")
+                        if replacedCount == 0 then
+                            break
+                        end
                     end
-                    coroutine.yield()
+                    table.insert(contentLines, normalizedLine .. "\n")
+                else
+                    -- The file name might have an optional \" around to shell escape the file name in the command.
+                    local backslashValue = string.byte("\\", 1)
+                    if string.byte(line, j+1) == backslashValue then
+                        j = j+2 -- \ and "
+                    end
 
-                    table.insert(contentLines, "\t\t\"command\": \"clang++.exe @\\\"" ..newrsppath .."\\\"\",\n")
+                    local _,endpos = line:find("\"", j+1)
+
+                    -- same thing here
+                    if string.byte(line, endpos-1) == backslashValue then
+                        endpos = endpos-1
+                    end
+
+                     local rsppath = line:sub(j+1, endpos-1)
+                    if rsppath and file_exists(rsppath) then
+                        local newrsppath = rsppath
+                        if not newrsppath:match("%.clang%.rsp$") then
+                            newrsppath = rsppath .. ".clang.rsp"
+                        end
+
+                        -- rewrite rsp contents
+                        if not shouldSkipFile then
+                            -- IMPORTANT: ExtractRSP now takes the *original* rsp path.
+                            local rspcontent = ExtractRSP(rsppath) 
+                            if rspcontent then
+                                local rspfile = io.open(newrsppath, "w")
+                                rspfile:write(rspcontent)
+                                rspfile:close()
+                            end
+                        end
+                        coroutine.yield()
+                        
+                        local newCmd = string.format([["command": "clang++ @%s"]], newrsppath)
+                        table.insert(contentLines, "\t\t" .. newCmd .. ",\n")
+                    else
+                        PrintAndLogError("RSP file not found: " .. (rsppath or "nil"))
+                        -- Fallback to keep the original line if rsp is missing
+                        table.insert(contentLines, line .. "\n")
+                    end
                 end
             else
-                -- it's not an rsp command, the flags will be clang compatible
-                -- for some reason they're only incompatible flags inside
-                -- rsps. keep line as is
-                local _, endArgsPos = line:find("%.exe\\\"")
-                local args = line:sub(endArgsPos+1, -1)
-                local rspfilename = currentFilename:gsub("\\\\","/")
-                rspfilename = rspfilename:gsub(":","")
-                rspfilename = rspfilename:gsub("\"","")
-                rspfilename = rspfilename:gsub(",","")
-                rspfilename = rspfilename:gsub("\\","/")
-                rspfilename = rspfilename:gsub("/","_")
-                rspfilename = rspfilename .. ".rsp"
-                local rspfilepath = rspdir .. rspfilename
-
-                if not shouldSkipFile then
-                    PrintAndLogMessage("Writing rsp: " .. rspfilepath)
-
-                    args = args:gsub("-D\\\"", "-D\"")
-                    args = args:gsub("-I\\\"", "-I\"")
-                    args = args:gsub("\\\"\\\"\\\"", "__3Q_PLACEHOLDER__")
-                    args = args:gsub("\\\"\\\"", "\\\"\"")
-                    args = args:gsub("\\\" ", "\" ")
-                    args = args:gsub("\\\\", "/")
-                    args = args:gsub(",%s*$", "") -- remove trailing comma and spaces
-                    args = args:gsub("\" ", "\"\n") -- one arg per line
-
-                    args = args:gsub("__3Q_PLACEHOLDER__", "\\\"\\\"\"")
-
-                    args = args:gsub("\n[^\n]*$", "")
-                    local rspfile = io.open(rspfilepath, "w")
-                    rspfile:write(args)
-                    rspfile:close()
+                -- This case handles commands that don't use response files.
+                -- We'll just clean up the compiler path and keep the rest.
+                if not Commands.IsMac() then
+                    line = line:gsub("clang%+%+%S*", "clang++")
                 end
-                coroutine.yield()
-
-                table.insert(contentLines, "\t\t\"command\": \"clang++.exe @\\\"" .. EscapePath(rspfilepath) .."\\\""
-                    .. " ".. EscapePath(currentFilename) .."\",\n")
+                table.insert(contentLines, line .. "\n")
             end
         else
             local fbegin, fend = line:find("\"file\": ")
@@ -579,13 +652,14 @@ function Stage_UbtGenCmd()
     end
 
 
-    local file = io.open(CurrentCompileCommandsTargetFilePath, "w")
+    Commands.Log("Writing final clangd output to: " .. clangdJsonPath)
+    local file = io.open(clangdJsonPath, "w")
     file:write(table.concat(contentLines))
     file:flush()
     file:close()
 
-    PrintAndLogMessage("finished processing compile_commands.json")
-    PrintAndLogMessage("generating header files with Unreal Header Tool...")
+    Commands.Log("finished processing compile_commands.json")
+    Commands.Log("generating header files with Unreal Header Tool...")
     Commands.EndTask("gencmd")
     DeleteAutocmd(Commands.gencmdAutocmdid)
 
@@ -596,17 +670,18 @@ function Stage_UbtGenCmd()
         callback = FuncBind(DispatchUnrealnvimCb, "headers")
     })
 
-    local cmd = CurrentGenData.ubtPath .. " -project=" ..
+    local ubt = Commands.IsMac() and CurrentGenData.ueBuildBat or CurrentGenData.ubtPath
+    local cmd = ubt .. " -project=" ..
         CurrentGenData.projectPath .. " " .. CurrentGenData.target.UbtExtraFlags .. " " ..
         CurrentGenData.prjName .. CurrentGenData.targetNameSuffix .. " " .. CurrentGenData.target.Configuration .. " " ..
-        CurrentGenData.target.PlatformName .. " -headers"
+        Commands.GetPlatformName() .. " -headers"
 
-    vim.cmd("compiler msvc")
+    vim.cmd("compiler " .. (Commands.IsMac() and "gcc" or "msvc"))
     vim.cmd("Dispatch " .. cmd)
 end
 
 function Stage_GenHeadersCompleted()
-    PrintAndLogMessage("Finished generating header files with Unreal Header Tool...")
+    Commands.Log("Finished generating header files with Unreal Header Tool...")
     vim.api.nvim_command('autocmd! ShellCmdPost * lua DispatchUnrealnvimCb()')
     vim.api.nvim_command('LspRestart')
     Commands.EndTask("headers")
@@ -639,8 +714,8 @@ function DispatchCallbackCoroutine(data)
     if not data then
         log("data was nil")
     end
-    PrintAndLogMessage("DispatchCallbackCoroutine()")
-    PrintAndLogMessage("DispatchCallbackCoroutine() task="..CurrentGenData:GetTaskAndStatus())
+    Commands.Log("DispatchCallbackCoroutine()")
+    Commands.Log("DispatchCallbackCoroutine() task="..CurrentGenData:GetTaskAndStatus())
     if data == "gencmd" and CurrentGenData:GetTaskStatus("gencmd") == TaskState.scheduled then
         CurrentGenData:SetTaskStatus("gencmd", TaskState.inprogress)
         Commands.taskCoroutine = coroutine.create(Stage_UbtGenCmd)
@@ -671,27 +746,95 @@ function Commands.GetProjectName()
     return CurrentGenData.prjName .. ".uproject"
 end
 
+function Commands._GetEngineAssociation(uprojectPath)
+    local file = io.open(uprojectPath, "r")
+    if not file then
+        return nil
+    end
+    local content = file:read("*all")
+    file:close()
+    local data = vim.fn.json_decode(content)
+    if data and data.EngineAssociation then
+        return data.EngineAssociation
+    end
+    return nil
+end
+
+function Commands._TryAutoDetectEngineDir(uprojectPath)
+    if not Commands.IsMac() then
+        return nil
+    end
+
+    local engineAssociation = Commands._GetEngineAssociation(uprojectPath)
+    if not engineAssociation then
+        Commands.Log("Could not read EngineAssociation from .uproject file.")
+        return nil
+    end
+
+    local launcherDataPath = vim.fn.expand('~/Library/Application Support/Epic/UnrealEngineLauncher/LauncherInstalled.dat')
+    if vim.fn.filereadable(launcherDataPath) == 0 then
+        Commands.Log("Could not find Epic Games Launcher installation data.")
+        return nil
+    end
+
+    local file = io.open(launcherDataPath, "r")
+    if not file then
+        return nil
+    end
+    local content = file:read("*all")
+    file:close()
+
+    local data = vim.fn.json_decode(content)
+    if not data or not data.InstallationList then
+        return nil
+    end
+
+    for _, installation in ipairs(data.InstallationList) do
+        if installation.AppName == "UE_" .. engineAssociation then
+            Commands.Log("Auto-detected Unreal Engine installation: " .. installation.InstallLocation)
+            return installation.InstallLocation
+        end
+    end
+
+    Commands.Log("Could not find a matching Unreal Engine installation for version " .. engineAssociation)
+    return nil
+end
+
 function InitializeCurrentGenData()
-    PrintAndLogMessage("initializing")
+    Commands.Log("initializing")
     local current_file_path = vim.api.nvim_buf_get_name(0)
     CurrentGenData.prjName, CurrentGenData.prjDir = Commands._GetDefaultProjectNameAndDir(current_file_path)
     if not CurrentGenData.prjName then
-        PrintAndLogMessage("could not find project. aborting")
+        Commands.Log("could not find project. aborting")
         return false
     end
 
+    local uprojectPath = CurrentGenData.prjDir .. "/" .. CurrentGenData.prjName .. ".uproject"
     CurrentGenData.config = Commands._EnsureConfigFile(CurrentGenData.prjDir,
         CurrentGenData.prjName)
 
     if not CurrentGenData.config then
-        PrintAndLogMessage("no config file. aborting")
+        Commands.Log("no config file. aborting")
+        return false
+    end
+    
+    if not CurrentGenData.config.EngineDir or CurrentGenData.config.EngineDir == "" then
+        CurrentGenData.config.EngineDir = Commands._TryAutoDetectEngineDir(uprojectPath)
+    end
+
+    if not CurrentGenData.config.EngineDir or CurrentGenData.config.EngineDir == "" then
+        Commands.Log("EngineDir is not set in your UnrealNvim.json file. Please set it to the root of your Unreal Engine installation.")
         return false
     end
 
-    CurrentGenData.ubtPath = "\"" .. CurrentGenData.config.EngineDir .."/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe\""
-    CurrentGenData.ueBuildBat = "\"" .. CurrentGenData.config.EngineDir .."/Engine/Build/BatchFiles/Build.bat\""
-    CurrentGenData.projectPath = "\"" .. CurrentGenData.prjDir .. "/" .. 
-        CurrentGenData.prjName .. ".uproject\""
+    if Commands.IsMac() then
+        CurrentGenData.ubtPath = "dotnet " .. vim.fn.shellescape(CurrentGenData.config.EngineDir .. "/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.dll")
+        CurrentGenData.ueBuildBat = "/bin/bash " .. vim.fn.shellescape(CurrentGenData.config.EngineDir .."/Engine/Build/BatchFiles/Mac/Build.sh")
+    else
+        CurrentGenData.ubtPath = vim.fn.shellescape(CurrentGenData.config.EngineDir .."/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe")
+        CurrentGenData.ueBuildBat = vim.fn.shellescape(CurrentGenData.config.EngineDir .."/Engine/Build/BatchFiles/Build.bat")
+    end
+    CurrentGenData.projectPath = vim.fn.shellescape(CurrentGenData.prjDir .. "/" .. CurrentGenData.prjName .. ".uproject")
 
     local desiredTargetIndex = PromptBuildTargetIndex()
     CurrentGenData.target = CurrentGenData.config.Targets[desiredTargetIndex]
@@ -701,13 +844,13 @@ function InitializeCurrentGenData()
         CurrentGenData.targetNameSuffix = "Editor"
     end
 
-    PrintAndLogMessage("Using engine at:"..CurrentGenData.config.EngineDir)
+    Commands.Log("Using engine at:"..CurrentGenData.config.EngineDir)
 
     return true
 end
 
 function Commands.ScheduleTask(taskName)
-    PrintAndLogMessage("ScheduleTask: " .. taskName)
+    Commands.Log("ScheduleTask: " .. taskName)
     CurrentGenData:SetTaskStatus(taskName, TaskState.scheduled)
 end
 
@@ -716,12 +859,12 @@ function Commands.ClearTasks()
 end
 
 function Commands.BeginTask(taskName)
-    PrintAndLogMessage("BeginTask: " .. taskName)
+    Commands.Log("BeginTask: " .. taskName)
     CurrentGenData:SetTaskStatus(taskName, TaskState.inprogress)
 end
 
 function Commands.EndTask(taskName)
-    PrintAndLogMessage("EndTask: " .. taskName)
+    Commands.Log("EndTask: " .. taskName)
     CurrentGenData:SetTaskStatus(taskName, TaskState.completed)
     Commands.taskCoroutine = nil
 end
@@ -740,20 +883,29 @@ function Commands.BuildCoroutine()
             callback = BuildComplete 
         })
 
-    local cmd = CurrentGenData.ueBuildBat .. " " .. CurrentGenData.prjName .. 
-        CurrentGenData.targetNameSuffix .. " " ..
-        CurrentGenData.target.PlatformName  .. " " .. 
-        CurrentGenData.target.Configuration .. " " .. 
-        CurrentGenData.projectPath .. " -waitmutex"
-
-    vim.cmd("compiler msvc")
+    local cmd
+    if Commands.IsMac() then
+        cmd = CurrentGenData.ueBuildBat .. " " .. CurrentGenData.prjName .. 
+            CurrentGenData.targetNameSuffix .. " " ..
+            Commands.GetPlatformName()  .. " " .. 
+            CurrentGenData.target.Configuration .. " " .. 
+            "-project=" .. CurrentGenData.projectPath .. " -waitmutex"
+        vim.cmd("compiler gcc")
+    else
+        cmd = CurrentGenData.ueBuildBat .. " " .. CurrentGenData.prjName .. 
+            CurrentGenData.targetNameSuffix .. " " ..
+            Commands.GetPlatformName()  .. " " .. 
+            CurrentGenData.target.Configuration .. " " .. 
+            CurrentGenData.projectPath .. " -waitmutex"
+        vim.cmd("compiler msvc")
+    end
     vim.cmd("Dispatch " .. cmd)
 
 end
 
 function Commands.build(opts)
     CurrentGenData:ClearTasks()
-    PrintAndLogMessage("Building uproject")
+    Commands.Log("Building uproject")
 
     if not InitializeCurrentGenData() then
         return
@@ -768,7 +920,7 @@ end
 
 function Commands.run(opts)
     CurrentGenData:ClearTasks()
-    PrintAndLogMessage("Running uproject")
+    Commands.Log("Running uproject")
     
     if not InitializeCurrentGenData() then
         return
@@ -781,30 +933,45 @@ function Commands.run(opts)
     if CurrentGenData.target.withEditor then
         local editorSuffix = ""
         if CurrentGenData.target.Configuration ~= "Development" then
-            editorSuffix = "-" .. CurrentGenData.target.PlatformName .. "-" .. 
+            editorSuffix = "-" .. Commands.GetPlatformName() .. "-" .. 
             CurrentGenData.target.Configuration
         end
 
-        local executablePath = "\"".. CurrentGenData.config.EngineDir .. "/Engine/Binaries/" ..
-        CurrentGenData.target.PlatformName .. "/UnrealEditor" ..  editorSuffix .. ".exe\""
+        if Commands.IsMac() then
+            local appPath = vim.fn.shellescape(CurrentGenData.config.EngineDir .. "/Engine/Binaries/" ..
+            Commands.GetPlatformName() .. "/" .. Commands.GetEditorName() .. editorSuffix .. ".app")
 
-        cmd = executablePath .. " " ..
-        CurrentGenData.projectPath .. " -skipcompile"
+            cmd = "open " .. appPath .. " --args " ..
+            CurrentGenData.projectPath .. " -skipcompile"
+        else
+            local executablePath = "\"".. CurrentGenData.config.EngineDir .. "/Engine/Binaries/" ..
+            Commands.GetPlatformName() .. "/" .. Commands.GetEditorName() ..  editorSuffix .. Commands.GetExecutableFileExtension() .. "\""
+
+            cmd = executablePath .. " " ..
+            CurrentGenData.projectPath .. " -skipcompile"
+        end
     else
         local exeSuffix = ""
         if CurrentGenData.target.Configuration ~= "Development" then
-            exeSuffix = "-" .. CurrentGenData.target.PlatformName .. "-" .. 
+            exeSuffix = "-" .. Commands.GetPlatformName() .. "-" .. 
             CurrentGenData.target.Configuration
         end
 
-        local executablePath = "\"".. CurrentGenData.prjDir .. "/Binaries/" ..
-        CurrentGenData.target.PlatformName .. "/" .. CurrentGenData.prjName ..  exeSuffix .. ".exe\""
+        if Commands.IsMac() then
+            local appPath = vim.fn.shellescape(CurrentGenData.prjDir .. "/Binaries/" ..
+            Commands.GetPlatformName() .. "/" .. CurrentGenData.prjName .. exeSuffix .. ".app")
 
-        cmd = executablePath
+            cmd = "open " .. appPath
+        else
+            local executablePath = "\"".. CurrentGenData.prjDir .. "/Binaries/" ..
+            Commands.GetPlatformName() .. "/" .. CurrentGenData.prjName ..  exeSuffix .. Commands.GetExecutableFileExtension() .. "\""
+
+            cmd = executablePath
+        end
     end
 
-    PrintAndLogMessage(cmd)
-    vim.cmd("compiler msvc")
+    Commands.Log(cmd)
+    vim.cmd("compiler " .. (Commands.IsMac() and "gcc" or "msvc"))
     vim.cmd("Dispatch " .. cmd)
     Commands.EndTask("run")
     Commands.EndTask("final")
@@ -828,7 +995,7 @@ function Commands.generateCommands(opts)
     log(Commands.Inspect(opts))
 
     if not InitializeCurrentGenData() then
-        PrintAndLogMessage("init failed")
+        Commands.Log("init failed")
         return
     end
 
@@ -843,9 +1010,9 @@ function Commands.generateCommands(opts)
             callback = FuncBind(DispatchUnrealnvimCb, "gencmd")
         })
 
-    PrintAndLogMessage("listening to ShellCmdPost")
+    Commands.Log("listening to ShellCmdPost")
     --vim.cmd("compiler msvc")
-    PrintAndLogMessage("compiler set to msvc")
+    Commands.Log("compiler set to msvc")
 
     Commands.taskCoroutine = coroutine.create(Commands.generateCommandsCoroutine)
     Commands.EnsureUpdateStarted()
@@ -937,30 +1104,32 @@ function Commands:SetCurrentAnimation(animationName)
 end
 
 function Commands.generateCommandsCoroutine()
-    PrintAndLogMessage("Generating clang-compatible compile_commands.json")
+    Commands.Log("Generating clang-compatible compile_commands.json")
     Commands:SetCurrentAnimation("kirbyFlip")
     coroutine.yield()
     Commands.ClearTasks()
 
     local editorFlag = ""
-    if CurrentGenData.config.withEditor then
-        PrintAndLogMessage("Building editor")
+    if CurrentGenData.target.withEditor then
+        Commands.Log("Building editor")
         editorFlag = "-Editor"
     end
 
     Commands.ScheduleTask("gencmd")
-    -- local cmd = CurrentGenData.ubtPath .. " -mode=GenerateClangDatabase -StaticAnalyzer=Clang -project=" ..
-    local cmd = CurrentGenData.ubtPath .. " -mode=GenerateClangDatabase -project=" ..
+    local ubt = Commands.IsMac() and CurrentGenData.ueBuildBat or CurrentGenData.ubtPath
+    -- local cmd = ubt .. " -mode=GenerateClangDatabase -StaticAnalyzer=Clang -project=" ..
+    local cmd = ubt .. " -mode=GenerateClangDatabase -project=" ..
     CurrentGenData.projectPath .. " -game -engine " .. CurrentGenData.target.UbtExtraFlags .. " " ..
     editorFlag .. " " ..
     CurrentGenData.prjName .. CurrentGenData.targetNameSuffix .. " " .. CurrentGenData.target.Configuration .. " " ..
-    CurrentGenData.target.PlatformName
+    Commands.GetPlatformName()
 
-    PrintAndLogMessage("Dispatching command:")
-    PrintAndLogMessage(cmd)
+    Commands.Log("Dispatching command:")
+    Commands.Log(cmd)
+    -- This variable is used by the callback to know where to write the *final* file.
     CurrentCompileCommandsTargetFilePath =  CurrentGenData.prjDir .. "/compile_commands.json"
     vim.api.nvim_command("Dispatch " .. cmd)
-    PrintAndLogMessage("Dispatched")
+    Commands.Log("Dispatched")
 end
 
 function Commands.SetUnrealCD()
@@ -969,7 +1138,7 @@ function Commands.SetUnrealCD()
     if prjDir then
         vim.cmd("cd " .. prjDir)
     else
-        PrintAndLogMessage("Could not find unreal project root directory, make sure you have the correct buffer selected")
+        Commands.Log("Could not find unreal project root directory, make sure you have the correct buffer selected")
     end
 end
 
