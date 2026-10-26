@@ -293,6 +293,36 @@ function Commands.IsWindows()
     return vim.loop.os_uname().sysname == "Windows_NT"
 end
 
+-- Neovim reports Linux inside WSL, while UnrealBuildTool.exe runs on Windows.
+-- Detect WSL explicitly so native Linux Unreal workflows keep Linux paths.
+function Commands.IsWSL()
+    if vim.env.WSL_INTEROP or vim.env.WSL_DISTRO_NAME then
+        return true
+    end
+
+    local versionFile = io.open("/proc/version", "r")
+    if not versionFile then
+        return false
+    end
+
+    local version = versionFile:read("*all") or ""
+    versionFile:close()
+    return version:lower():find("microsoft", 1, true) ~= nil
+end
+
+local function ToWindowsPath(path)
+    if not path then
+        return path
+    end
+
+    local converted = vim.fn.system({ "wslpath", "-w", path })
+    if vim.v.shell_error ~= 0 then
+        error("wslpath failed to convert path: " .. path)
+    end
+
+    return converted:gsub("[\r\n]+$", "")
+end
+
 function Commands.GetPlatformName()
     if Commands.IsMac() then
         return "Mac"
@@ -834,7 +864,12 @@ function InitializeCurrentGenData()
         CurrentGenData.ubtPath = vim.fn.shellescape(CurrentGenData.config.EngineDir .."/Engine/Binaries/DotNET/UnrealBuildTool/UnrealBuildTool.exe")
         CurrentGenData.ueBuildBat = vim.fn.shellescape(CurrentGenData.config.EngineDir .."/Engine/Build/BatchFiles/Build.bat")
     end
-    CurrentGenData.projectPath = vim.fn.shellescape(CurrentGenData.prjDir .. "/" .. CurrentGenData.prjName .. ".uproject")
+    local projectPath = CurrentGenData.prjDir .. "/" .. CurrentGenData.prjName .. ".uproject"
+    if Commands.IsWSL() then
+        -- UBT is a Windows process in this setup and cannot resolve /mnt/c/... paths.
+        projectPath = ToWindowsPath(projectPath)
+    end
+    CurrentGenData.projectPath = vim.fn.shellescape(projectPath)
 
     local desiredTargetIndex = PromptBuildTargetIndex()
     CurrentGenData.target = CurrentGenData.config.Targets[desiredTargetIndex]
